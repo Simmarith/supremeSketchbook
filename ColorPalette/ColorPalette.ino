@@ -1,4 +1,15 @@
 #include <FastLED.h>
+#include <ESP8266WiFi.h>
+#include <WiFiClient.h>
+#include <MQTTClient.h>
+
+const char* host = "192.168.0.17";
+const char* ssid = "Buschfunk";
+const char* password = "*************";
+
+WiFiClient net;
+MQTTClient mqtt;
+
 
 #define LED_PIN     D4
 #define NUM_LEDS    240
@@ -11,23 +22,45 @@ CRGB leds[NUM_LEDS];
 
 CRGBPalette16 currentPalette;
 TBlendType    currentBlending;
+bool lightsOn;
 
 extern CRGBPalette16 myRedWhiteBluePalette;
 extern const TProgmemPalette16 myRedWhiteBluePalette_p PROGMEM;
 
 
 void setup() {
+    Serial.begin(115200);
+    Serial.println();
+    Serial.println("Booting...");
+
+    //FASTLED
     delay( 3000 ); // power-up safety delay
     FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection( TypicalLEDStrip );
-    FastLED.setBrightness(  BRIGHTNESS );
-    
+    FastLED.setBrightness( BRIGHTNESS );
     currentPalette = RainbowColors_p;
     currentBlending = LINEARBLEND;
+
+    //WIFI & MQTT
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.begin(ssid, password);
+    mqtt.begin(host, net);
+    connect();
+    mqtt.onMessage(messageReceived);
+    lightsOn = true;
+    
+    Serial.println("Setup completed...");
 }
 
 
 void loop()
 {
+    //MQTT
+    if (!mqtt.connected()) {
+      connect();
+    }
+    mqtt.loop();
+
+    //FASTLED
     ChangePalettePeriodically();
     
     static uint8_t startIndex = 0;
@@ -44,11 +77,58 @@ void loop()
     } else {
       brightness = pulse;
     }
+
+    if (!lightsOn) {
+      brightness = 0;
+    }
     
     FillLEDsFromPaletteColors( startIndex, brightness);
     
     FastLED.show();
     FastLED.delay(1000 / UPDATES_PER_SECOND);
+}
+
+void connect() {
+  while(WiFi.waitForConnectResult() != WL_CONNECTED) {
+    WiFi.begin(ssid, password);
+    Serial.println("WiFi connection failed. Retry.");
+  }
+
+  Serial.print("Wifi connection successful - IP-Address: ");
+  Serial.println(WiFi.localIP());
+
+  while (!mqtt.connect(host)) {
+    Serial.print(".");
+  }
+
+  mqtt.subscribe("/lights/all");
+  mqtt.subscribe("/lights/christmas");
+
+  Serial.println("MQTT connected!");
+}
+
+void messageReceived(String &topic, String &payload) {
+  Serial.println("incoming: " + topic + " - " + payload);
+  if (topic == "/lights/all") {
+    if (payload == "on") {
+      lightsOn = true;
+      Serial.println("lights on!");
+    }
+    if (payload == "off") {
+      lightsOn = false;
+      Serial.println("lights out!");
+    }
+  }
+  if (topic == "/lights/christmas") {
+    if (payload == "on") {
+      lightsOn = true;
+      Serial.println("lights on!");
+    }
+    if (payload == "off") {
+      lightsOn = false;
+      Serial.println("lights out!");
+    }
+  }
 }
 
 void FillLEDsFromPaletteColors( uint8_t colorIndex, uint8_t brightness)
@@ -57,7 +137,9 @@ void FillLEDsFromPaletteColors( uint8_t colorIndex, uint8_t brightness)
         leds[i] = ColorFromPalette( currentPalette, colorIndex, brightness, currentBlending);
         colorIndex += 3;
     }
-    addGlitter(80);
+    if (brightness != 0) {
+        addGlitter(80);
+    }
 }
 
 void addGlitter( fract8 chanceOfGlitter) 
